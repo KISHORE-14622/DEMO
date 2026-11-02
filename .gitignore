@@ -1,0 +1,29 @@
+# Node
+node_modules/
+npm-debug.log*
+.npm
+
+# React build output
+react-app/build/
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.production
+
+# Docker
+.docker/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Logs
+*.log
+logs/
