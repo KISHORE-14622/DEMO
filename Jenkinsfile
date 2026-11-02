@@ -1,15 +1,11 @@
 pipeline {
     agent any
 
-    tools {
-        nodejs 'NodeJS-18'
-    }
-
     environment {
         SFTP_HOST        = 'sftp'
         SFTP_PORT        = '22'
         SFTP_USER        = 'sftpuser'
-        SFTP_REMOTE_PATH = '/home/sftpuser/upload/artifacts'
+        SFTP_REMOTE_PATH = 'upload/artifacts'
         BUILD_VERSION    = "${env.BUILD_NUMBER}"
         DOCKER_IMAGE_API = "node-api:${env.BUILD_NUMBER}"
         DOCKER_IMAGE_UI  = "react-app:${env.BUILD_NUMBER}"
@@ -35,7 +31,7 @@ pipeline {
                     steps {
                         dir('node-api') {
                             echo '📦 Installing Node.js API dependencies...'
-                            sh 'npm ci'
+                            sh 'npm ci || npm install'
                         }
                     }
                 }
@@ -43,7 +39,7 @@ pipeline {
                     steps {
                         dir('react-app') {
                             echo '📦 Installing React dependencies...'
-                            sh 'npm ci'
+                            sh 'npm ci || npm install'
                         }
                     }
                 }
@@ -122,26 +118,16 @@ pipeline {
         stage('Upload to SFTP') {
             steps {
                 echo '📤 Uploading artifacts to SFTP server...'
-                sshagent(credentials: ['sftp-credentials']) {
+                withCredentials([usernamePassword(credentialsId: 'sftp-credentials', usernameVariable: 'SFTP_LOGIN', passwordVariable: 'SFTP_PASS')]) {
                     sh """
-                        # Create versioned directory on SFTP
-                        ssh -o StrictHostKeyChecking=no \
-                            -p ${SFTP_PORT} \
-                            ${SFTP_USER}@${SFTP_HOST} \
-                            "mkdir -p ${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}"
-
-                        # Upload both artifact packages
-                        scp -o StrictHostKeyChecking=no \
-                            -P ${SFTP_PORT} \
-                            ${DEPLOY_DIR}/react-build-${BUILD_VERSION}.tar.gz \
-                            ${DEPLOY_DIR}/node-api-${BUILD_VERSION}.tar.gz \
-                            ${SFTP_USER}@${SFTP_HOST}:${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}/
-
-                        echo '✅ Upload complete! Verifying remote files:'
-                        ssh -o StrictHostKeyChecking=no \
-                            -p ${SFTP_PORT} \
-                            ${SFTP_USER}@${SFTP_HOST} \
-                            "ls -lh ${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}/"
+                        # Create versioned directory on SFTP and upload files
+                        sshpass -p "\$SFTP_PASS" sftp -o StrictHostKeyChecking=no -P ${SFTP_PORT} \${SFTP_LOGIN}@${SFTP_HOST} <<EOF
+mkdir ${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}
+put ${DEPLOY_DIR}/react-build-${BUILD_VERSION}.tar.gz ${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}/
+put ${DEPLOY_DIR}/node-api-${BUILD_VERSION}.tar.gz ${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}/
+ls ${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}
+EOF
+                        echo '✅ SFTP Upload complete!'
                     """
                 }
             }
@@ -151,17 +137,17 @@ pipeline {
         stage('Download from SFTP') {
             steps {
                 echo '📥 Downloading artifacts from SFTP server...'
-                sshagent(credentials: ['sftp-credentials']) {
+                withCredentials([usernamePassword(credentialsId: 'sftp-credentials', usernameVariable: 'SFTP_LOGIN', passwordVariable: 'SFTP_PASS')]) {
                     sh """
                         mkdir -p ${DEPLOY_DIR}/downloaded
 
-                        # Download artifacts from SFTP to local Jenkins workspace
-                        scp -o StrictHostKeyChecking=no \
+                        # Download artifacts from SFTP to local deploy directory
+                        sshpass -p "\$SFTP_PASS" scp -o StrictHostKeyChecking=no \
                             -P ${SFTP_PORT} \
-                            "${SFTP_USER}@${SFTP_HOST}:${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}/*.tar.gz" \
+                            \${SFTP_LOGIN}@${SFTP_HOST}:${SFTP_REMOTE_PATH}/build-${BUILD_VERSION}/*.tar.gz \
                             ${DEPLOY_DIR}/downloaded/
 
-                        echo '✅ Download complete!'
+                        echo '✅ SFTP Download complete!'
                         ls -lh ${DEPLOY_DIR}/downloaded/
                     """
                 }
@@ -209,10 +195,10 @@ pipeline {
                 echo '🏥 Running post-deployment health checks...'
                 sh """
                     # Wait for containers to stabilize
-                    sleep 8
+                    sleep 5
 
                     # Check Node.js API health
-                    HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health)
+                    HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" http://node-api:5000/health)
                     if [ "\$HTTP_CODE" = "200" ]; then
                         echo '✅ Node API is healthy (HTTP 200)'
                     else
@@ -221,7 +207,7 @@ pipeline {
                     fi
 
                     # Check Nginx health
-                    HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:80/health)
+                    HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" http://nginx-proxy/health)
                     if [ "\$HTTP_CODE" = "200" ]; then
                         echo '✅ Nginx is healthy (HTTP 200)'
                     else
@@ -230,13 +216,13 @@ pipeline {
                     fi
 
                     echo ''
-                    echo '════════════════════════════════'
-                    echo '✅ All health checks passed!'
-                    echo '────────────────────────────────'
+                    echo '═════════════════════════════════════════════'
+                    echo '🎉 All health checks passed!'
+                    echo '─────────────────────────────────────────────'
                     echo "🌐 React App: http://localhost:80"
                     echo "🟢 Node API:  http://localhost:5000"
                     echo "🔧 Jenkins:   http://localhost:8080"
-                    echo '════════════════════════════════'
+                    echo '═════════════════════════════════════════════'
                 """
             }
         }
