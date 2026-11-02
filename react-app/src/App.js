@@ -24,7 +24,7 @@ function App() {
     <div className="app">
       <div className="container">
         <div className="badge">🚀 CI/CD Demo for Jenkins</div>
-        <h1>Hello World! Iam Kishore. </h1>
+        <h1>Hello World! Iam Kishore kumar S. </h1>
         <p className="subtitle">React + Node.js + Jenkins + Docker + Nginx</p>
 
         <div className={`status-card ${status}`}>
